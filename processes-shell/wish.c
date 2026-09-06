@@ -88,9 +88,35 @@ int handle_chdir(char* directory){
 
 
 // "path" n-ary operator 
-int handle_path(SearchPath *path, char **args, size_t argc) {
+int handle_path(SearchPath *path, char **args) {
     // free old directories
     clear_path(path);
+
+
+
+    // count number of arguments:
+    size_t argc = 0;
+    for (size_t i = 1; args[i] != NULL; ++i) {
+        argc++;
+    }
+
+    // Induction on number of args:
+    // Base case:
+    // 2. If argc == 0, we are done (path is empty)
+    if (argc == 0) {
+        return 0;
+    }
+
+
+    // Inductive case:
+    // allocate memory:
+    path->directories = malloc(argc * sizeof(char *));
+    if (path->directories == NULL) {
+        print_error();
+        return 1;
+    }
+
+
     path->directories = args;
     path->directory_count = argc;
     return 0;
@@ -110,10 +136,7 @@ int parse_handle_single_command(ShellState *shell, char **tokens){
     } else if (strcmp(tokens[0], "path") == 0 && tokens[1] != NULL){
         // 'path' is not implemented yet
         // Pass tokens[1] (the start of the path arguments) and their count to handle_path
-        size_t path_argc = 0;
-        for (size_t i = 1; tokens[i] != NULL; ++i) {
-            path_argc++;
-        }
+        
         return handle_path(shell, &tokens[1], path_argc);
 
     } else{
