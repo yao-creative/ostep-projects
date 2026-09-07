@@ -37,7 +37,7 @@ void clear_path(SearchPath *path){
 
     // for p->directories not NULL
     for (size_t i = 0; i < path-> directory_count; i++){
-        free(path->directories[i]) // Free the owned strings
+        free(path->directories[i]); // Free the owned strings
     }
     free(path->directories);  // Free the container array
     path->directories = NULL;
@@ -54,7 +54,7 @@ int handle_exit(void){
 }
 
 // "cd" 1-ary with string directory argument
-int handle_chdir(char* directory){
+int handle_cd(char* directory){
     if (chdir(directory) != 0) {
         print_error();
         return 1;
@@ -66,8 +66,6 @@ int handle_chdir(char* directory){
 int handle_path(SearchPath *path, char **args) {
     // free old directories
     clear_path(path);
-
-
 
     // count number of arguments:
     size_t argc = 0;
@@ -96,7 +94,6 @@ int handle_path(SearchPath *path, char **args) {
         path->directories[i] = strdup(args[i]);
     }
     path->directory_count = argc; 
-
     return 0;
 }
 
@@ -110,7 +107,6 @@ int handle_external(SearchPath *path, char *name, char **argv) {
 
 
 // Lexing:
-
 char **lex_line(char *line) {
     // init case
     // States
@@ -125,7 +121,7 @@ char **lex_line(char *line) {
     }
 
     // constructor case
-    while ((token = strsep(&line, " ")) != NULL) {
+    while ((token = strsep(&line, " \t\n")) != NULL) {
         // Skip empty tokens from multiple spaces
         if (*token == '\0') continue;
         tokens[position] = token;
@@ -134,11 +130,14 @@ char **lex_line(char *line) {
         // Resize the array if necessary
         if (position >= bufsize) {
             bufsize += 64;
-            tokens = realloc(tokens, bufsize * sizeof(char*));
-            if (!tokens) {
+            // for safety realloc can turn null and then original pointer lost
+            char **tmp = realloc(tokens, bufsize * sizeof(char*));
+            if (tokens == NULL) {
+                free(tokens);
                 fprintf(stderr, "wish: allocation error\n");
                 exit(EXIT_FAILURE);
             }
+            tokens = tmp;
         }
     }
     tokens[position] = NULL; // Null-terminate the array
@@ -201,6 +200,8 @@ Command classify_command(char **tokens){
             cmd.tag = CMD_PARSE_ERROR;
             return cmd;
         }
+        cmd.tag = CMD_CD;
+        return cmd;
     }
 
     if (strcmp(tokens[0], "path") == 0){
@@ -213,7 +214,7 @@ Command classify_command(char **tokens){
     }
     
     // else:
-    cmd.tag = CMD_EXTERNAL
+    cmd.tag = CMD_EXTERNAL;
     cmd.as.external.name = tokens[0];
     cmd.as.external.argv = tokens;
     return cmd;
@@ -222,6 +223,7 @@ Command classify_command(char **tokens){
 
 // routing table for execution dispatching: Shell Env x Command -> Shell' Env x int (result).
 int execute_command(ShellState *shell, Command cmd) {
+    // printf("Command tag: %d\n", cmd.tag);
     switch (cmd.tag) {
         case CMD_EXIT:
             return handle_exit();
@@ -229,11 +231,9 @@ int execute_command(ShellState *shell, Command cmd) {
             return handle_cd(cmd.as.cd.dir);
         case CMD_PATH:
             return handle_path(&shell->path,
-                cmd.as.path.dirs,
-                cmd.as.path.count
-                );
+                cmd.as.path.dirs);
         case CMD_EXTERNAL:
-            return handle_path(&shell->path,
+            return handle_external(&shell->path,
                                 cmd.as.external.name,
                                 cmd.as.external.argv
                               );
@@ -251,6 +251,7 @@ int handle_line(ShellState *shell, char *line){
     Command cmd = classify_command(tokens); //take the vector of tokens and classify the command tag.
     int result = execute_command(shell, cmd); //take in the command = commandTag \times (cd_args + path_args + external_args)
     free(tokens);
+    return result;
     //
 }
 
@@ -295,7 +296,7 @@ int main(int argc, char *argv[]){
         size_t len = 0;
         ssize_t read;
         
-        while (true) {
+        while (1) {
             printf("wish> ");
             fflush(stdout);
             read = getline(&line, &len, stdin);
