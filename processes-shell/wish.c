@@ -30,10 +30,16 @@ void init_shell(ShellState *s) {
 
 // freeing paths 
 void clear_path(SearchPath *path){
-    for (size_t i = 0; i < path-> directory_count; i++){
-        free(p->directories[i]) // Free the owned strings
+    // init case if directories is NULL:
+    if (path->directories == NULL){
+        return; 
     }
-    free(p->directories);  // Free the container array
+
+    // for p->directories not NULL
+    for (size_t i = 0; i < path-> directory_count; i++){
+        free(path->directories[i]) // Free the owned strings
+    }
+    free(path->directories);  // Free the container array
     path->directories = NULL;
     path->directory_count = 0;
 }
@@ -89,6 +95,8 @@ int handle_path(SearchPath *path, char **args) {
     for (size_t i = 0; i < argc; i++) {
         path->directories[i] = strdup(args[i]);
     }
+    path->directory_count = argc; 
+
     return 0;
 }
 
@@ -223,7 +231,7 @@ int execute_command(ShellState *shell, Command cmd) {
             return handle_path(&shell->path,
                 cmd.as.path.dirs,
                 cmd.as.path.count
-            );
+                );
         case CMD_EXTERNAL:
             return handle_path(&shell->path,
                                 cmd.as.external.name,
@@ -235,8 +243,6 @@ int execute_command(ShellState *shell, Command cmd) {
             return 1; 
     }
 }
-
-
 
 // 0 success, 1 failure, 
 int handle_line(ShellState *shell, char *line){
@@ -311,5 +317,4 @@ int main(int argc, char *argv[]){
         print_error();
         exit(1);
     }
-
 }
