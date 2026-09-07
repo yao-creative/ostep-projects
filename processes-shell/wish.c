@@ -18,22 +18,92 @@ typedef struct {
 } ShellState;
 
 // utilities 
+void print_error(void){
+    fprintf(stderr, "An error has occurred\n");
+}
+
+// Global state
 void init_shell(ShellState *s) {
     s->path.directories = NULL;
     s->path.directory_count = 0;
 }
 
+// freeing paths 
 void clear_path(SearchPath *path){
     for (size_t i = 0; i < path-> directory_count; i++){
         free(p->directories[i]) // Free the owned strings
     }
     free(p->directories);  // Free the container array
-    p->directories = NULL;
-    p->directory_count = 0;
+    path->directories = NULL;
+    path->directory_count = 0;
 }
 
-char **lex_line(char *line) {
 
+// Bultin commands:
+
+// "exit" 0-ary with -1 output by contract
+// sentinel node 
+int handle_exit(void){ 
+    return -1;
+}
+
+// "cd" 1-ary with string directory argument
+int handle_chdir(char* directory){
+    if (chdir(directory) != 0) {
+        print_error();
+        return 1;
+    }
+    return 0;
+}
+
+// "path" n-ary operator 
+int handle_path(SearchPath *path, char **args) {
+    // free old directories
+    clear_path(path);
+
+
+
+    // count number of arguments:
+    size_t argc = 0;
+    for (size_t i = 0; args[i] != NULL; ++i) {
+        argc++;
+    }
+
+    // Induction on number of args:
+    // Base case:
+    // 2. If argc == 0, we are done (path is empty)
+    if (argc == 0) {
+        return 0;
+    }
+
+    // Inductive case:
+    // allocate memory:
+    path->directories = malloc(argc * sizeof(char *));
+    // no path to 
+    if (path->directories == NULL) {
+        print_error();
+        return 1;
+    }
+
+    // deep copy each arg into path
+    for (size_t i = 0; i < argc; i++) {
+        path->directories[i] = strdup(args[i]);
+    }
+    return 0;
+}
+
+// hanle external also n-ary operator depending on definition:
+int handle_external(SearchPath *path, char *name, char **argv) {
+    (void) path; (void)argv;
+    fprintf(stderr, "external dispatch for '%s' not yet implemented\n", name);
+    return 1;
+}
+
+
+
+// Lexing:
+
+char **lex_line(char *line) {
     // init case
     // States
     int bufsize = 64;
@@ -67,91 +137,114 @@ char **lex_line(char *line) {
     return tokens;
 }
 
-void print_error(){
-    fprintf(stderr, "An error has occurred\n");
-}
-
-// "exit" 0-ary with -1 output by contract
-int handle_exit(){
-    return -1;
-}
-
-// "cd" 1-ary with string directory argument
-int handle_chdir(char* directory){
-    if (chdir(directory) != 0) {
-        print_error();
-        return 1;
-    }
-    return 0;
-}
 
 
+// Parsing:
+/* ---------- B: the coproduct ----------------------------------------------
+ * Command = Exit + Cd(str) + Path(str*) + External(str, str*) + ParseError
+ * Each summand's fields are already arity-correct by construction: there is
+ * no way to build a CMD_CD with zero or two arguments. That guarantee is the
+ * entire content of "parse, don't validate" — it lives in this type, not in
+ * a runtime check.
+ * ---------------------------------------------------------------------- */
 
-// "path" n-ary operator 
-int handle_path(SearchPath *path, char **args) {
-    // free old directories
-    clear_path(path);
-
-
-
-    // count number of arguments:
-    size_t argc = 0;
-    for (size_t i = 1; args[i] != NULL; ++i) {
-        argc++;
-    }
-
-    // Induction on number of args:
-    // Base case:
-    // 2. If argc == 0, we are done (path is empty)
-    if (argc == 0) {
-        return 0;
-    }
+typedef enum { CMD_EXIT, CMD_CD, CMD_PATH, CMD_EXTERNAL, CMD_PARSE_ERROR } CommandTag;
 
 
-    // Inductive case:
-    // allocate memory:
-    path->directories = malloc(argc * sizeof(char *));
-    if (path->directories == NULL) {
-        print_error();
-        return 1;
+// tag x argument word. Argument Word = cd_args | path_args | external_args.
+// cd_args = char *dir . path_args 
+typedef struct {
+    CommandTag tag; 
+    union {
+        struct { char *dir; }                 cd;        // exactly one borrowed string
+        struct { char **dirs; size_t count; }  path;      // borrowed strings, may be empty
+        struct { char *name; char **argv; }    external;  // borrowed strings; argv is NULL-terminated for execv
+    } as; // Argument tokens above.
+} Command;
+
+/* ---------- A -> 1+B : the parse step --------------------------------------
+ * All arity/shape validation happens exactly once, here. tokens[] is BORROWED
+ * from the caller's `line` buffer (see lex_line below) — classify_command
+ * neither copies nor frees anything; it only reads and tags.
+ * ---------------------------------------------------------------------- */
+
+
+// token stream -> Command = tag \times (argument word)
+Command classify_command(char **tokens){
+    Command cmd; 
+
+    // disjunction of init/ tag and catch parse error on ~ (constructor / argument word match).
+    if (tokens[0] == NULL) {
+        cmd.tag = CMD_PARSE_ERROR;
+        return cmd;
     }
 
+    if (strcmp(tokens[0], "exit") == 0){
+        if (tokens[1] != NULL){
+            cmd.tag = CMD_PARSE_ERROR;
+            return cmd;
+        }
+        cmd.tag = CMD_EXIT;
+        return cmd;
+    }
 
-    path->directories = args;
-    path->directory_count = argc;
-    return 0;
+    if (strcmp(tokens[0], "cd") == 0){
+        if (tokens[1] == NULL || tokens[2] != NULL){
+            cmd.tag = CMD_PARSE_ERROR;
+            return cmd;
+        }
+    }
+
+    if (strcmp(tokens[0], "path") == 0){
+        cmd.tag = CMD_PATH;
+        cmd.as.path.dirs = &tokens[1]; // borrow may point straight to NULL, but we have 
+        size_t n = 0;
+        while (tokens[1 + n] != NULL) n++;
+        cmd.as.path.count = n;  // borrow — execv wants exactly this shape
+        return cmd;
+    }
+    
+    // else:
+    cmd.tag = CMD_EXTERNAL
+    cmd.as.external.name = tokens[0];
+    cmd.as.external.argv = tokens;
+    return cmd;
 }
 
 
-// array of tokens which make up a single command
-int parse_handle_single_command(ShellState *shell, char **tokens){
-    // exit | cd <path> | path <path> | ERROR
-    // parse in if statement then excute within.
-    //single length tokens:
-    if (strcmp(tokens[0], "exit") == 0 && tokens[1] == NULL){
-        return handle_exit();
-    } else if (strcmp(tokens[0], "cd") == 0 && tokens[1] != NULL && tokens[2] == NULL){
-        // Fix 'cd' command: check for chdir failure, print error if needed
-        return handle_chdir(tokens[1]);
-    } else if (strcmp(tokens[0], "path") == 0 && tokens[1] != NULL){
-        // 'path' is not implemented yet
-        // Pass tokens[1] (the start of the path arguments) and their count to handle_path
-        
-        return handle_path(shell, &tokens[1], path_argc);
-
-    } else{
-        print_error();
-        return 1;
+// routing table for execution dispatching: Shell Env x Command -> Shell' Env x int (result).
+int execute_command(ShellState *shell, Command cmd) {
+    switch (cmd.tag) {
+        case CMD_EXIT:
+            return handle_exit();
+        case CMD_CD:
+            return handle_cd(cmd.as.cd.dir);
+        case CMD_PATH:
+            return handle_path(&shell->path,
+                cmd.as.path.dirs,
+                cmd.as.path.count
+            );
+        case CMD_EXTERNAL:
+            return handle_path(&shell->path,
+                                cmd.as.external.name,
+                                cmd.as.external.argv
+                              );
+        case CMD_PARSE_ERROR:
+        default:
+            print_error();
+            return 1; 
     }
 }
+
 
 
 // 0 success, 1 failure, 
 int handle_line(ShellState *shell, char *line){
     char **tokens = lex_line(line);
     // return the output resolved on single shell and its tokens.
-    return parse_handle_single_command(shell, tokens);
-
+    Command cmd = classify_command(tokens); //take the vector of tokens and classify the command tag.
+    int result = execute_command(shell, cmd); //take in the command = commandTag \times (cd_args + path_args + external_args)
+    free(tokens);
     //
 }
 
@@ -163,6 +256,7 @@ int main(int argc, char *argv[]){
     ShellState shell;
     init_shell(&shell);  
 
+    // partition on the cases.
     // batch
     if (argc == 2){
         char *file = argv[1]; //file is path is string first argument
@@ -185,13 +279,12 @@ int main(int argc, char *argv[]){
                 }
             }
             //cleanup
-            free(&line);
+            free(line);
             clear_path(&shell.path);
             fclose(fp);
         }
     } // interactive
     else if (argc == 1){
-        while (true) {
         char *line = NULL;
         size_t len = 0;
         ssize_t read;
@@ -213,7 +306,6 @@ int main(int argc, char *argv[]){
         free(line);
         clear_path(&shell.path);
         exit(0);
-        }
     } else {
         clear_path(&shell.path);
         print_error();
