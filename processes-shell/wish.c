@@ -180,7 +180,7 @@ typedef struct {
 Command classify_command(char **tokens){
     Command cmd; 
 
-    // disjunction of init/ tag and catch parse error on ~ (constructor / argument word match).
+    // disjunction of init/ tag and catch parse error on ~ (constructor / argument word match) = there exist null early or not null at the end.
     if (tokens[0] == NULL) {
         cmd.tag = CMD_PARSE_ERROR;
         return cmd;
@@ -204,6 +204,7 @@ Command classify_command(char **tokens){
         return cmd;
     }
 
+    // direct match since arity is also unknown.
     if (strcmp(tokens[0], "path") == 0){
         cmd.tag = CMD_PATH;
         cmd.as.path.dirs = &tokens[1]; // borrow may point straight to NULL, but we have 

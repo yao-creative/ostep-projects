@@ -1,0 +1,19 @@
+Good instinct on the general shape, but one factual correction that matters a lot: **`buf` is not on the heap.** It's an automatic-storage-duration array, allocated on `make_greeting`'s **stack frame**. There is no `malloc` anywhere in this function — nothing here is heap memory at all. `char *outside_ref = make_greeting(name)` does not "return the buf value in the heap"; it returns a pointer to a stack slot that has *already been deallocated* by the time the assignment executes, because the `return` statement is precisely the event that ends the frame's lifetime. Reading through `outside_ref` afterward is undefined behavior — in practice it often *looks* like it works (the bytes are frequently still sitting there, unclobbered, for a few instructions), which is the dangerous part: this bug is silent until something else reuses that stack region, at which point `outside_ref` reads garbage. Formally:
+
+$$
+\text{lifetime}(\texttt{buf}) = [\text{call entry},\ \text{return}) \qquad \text{scope}(\texttt{outside\_ref}) = [\text{return},\ \dots)
+$$
+
+These two intervals are **disjoint**, not merely "outside_ref's scope is greater" — the containment $\text{scope}(b) \subseteq \text{lifetime}(O)$ fails in the strongest possible way, since they don't even overlap. The fix is to change *where* the storage lives so its lifetime genuinely extends past the function: either `malloc` inside `make_greeting` (caller now owns it, must `free`) or have the caller pass in the buffer (`snprintf(caller_buf, ...)`, caller already owns it, function only borrows write access to it).
+
+## Question 1 — what does ownership actually attach to?
+
+Neither of your two options is quite right, and the distinction matters. Ownership attaches to **the storage duration of the allocation itself** — not to a variable name (multiple variables/pointers can alias the same allocation; the name is irrelevant to ownership), and not to "the function" as a static, lexical entity (the same function `make_greeting`, called twice, produces two *different* stack frames — two different owning instances — even though it's "the same function" in source).
+
+The precise object is: **a specific activation of a specific storage-duration region.**
+- For **automatic storage** (stack locals like `buf`): the owning region is *this particular call's activation frame* — a dynamic entity that comes into existence at call entry and is destroyed at return. Two concurrent or sequential calls to `make_greeting` have two distinct owning frames; ownership is per-*call*, not per-function-definition.
+- For **heap storage** (`malloc`): there is no frame tying it to any call at all — ownership is a free-floating contract that must be tracked *by convention* (comments, naming, or a discipline like the one we've been building), since C gives you no structural help. Ownership here is "whoever is obligated to call `free` exactly once," and that obligation can be explicitly *transferred* between functions (e.g., `handle_path` taking ownership of `strdup`'d strings) — something that's structurally impossible for stack storage, since you can't hand your stack frame to someone else.
+
+So the general rule you're reaching for: **ownership is a property of the allocation instance and its associated storage-duration rule, not of any name or any static piece of source code.** A variable is just a currently-borrowing (or currently-owning, if it's the one responsible for `free`) reference to that instance.
+
+Try Exercise 2 next — it's designed to test exactly this instance-vs-definition distinction, since `set_first_dir` looks fine at the definition level and only breaks depending on which *call's* storage `dir` happens to alias.
