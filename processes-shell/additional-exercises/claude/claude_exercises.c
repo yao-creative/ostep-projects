@@ -116,7 +116,64 @@ void set_first_dir(SearchPath *p, char *dir) {
 }
 
 
+
 // Exercise 3 — double free via two owners
+
+
+// Lexing:
+char **lex_line(char *line) {
+    // init case
+    // States
+    int bufsize = 64;
+    int position = 0;
+    char **tokens = malloc(bufsize * sizeof(char*));
+    char *token;
+
+    if (!tokens) {
+        fprintf(stderr, "wish: allocation error\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // constructor case
+    while ((token = strsep(&line, " \t\n")) != NULL) {
+        // Skip empty tokens from multiple spaces
+        if (*token == '\0') continue;
+        tokens[position] = token;
+        position++;
+
+        // Resize the array if necessary
+        if (position >= bufsize) {
+            bufsize += 64;
+            // for safety realloc can turn null and then original pointer lost
+            char **tmp = realloc(tokens, bufsize * sizeof(char*));
+            if (tokens == NULL) {
+                free(tokens);
+                fprintf(stderr, "wish: allocation error\n");
+                exit(EXIT_FAILURE);
+            }
+            tokens = tmp;
+        }
+    }
+    tokens[position] = NULL; // Null-terminate the array
+    return tokens;
+}
+
+// freeing paths 
+void clear_path(SearchPath *path){
+    // init case if directories is NULL:
+    if (path->directories == NULL){
+        return; 
+    }
+
+    // for p->directories not NULL
+    for (size_t i = 0; i < path-> directory_count; i++){
+        free(path->directories[i]); // Free the owned strings
+    }
+    free(path->directories);  // Free the container array
+    path->directories = NULL;
+    path->directory_count = 0;
+}
+
 void handle_path_broken(SearchPath *p, char **dirs, size_t n) {
     p->directories = dirs;          // no copy
     p->directory_count = n;
@@ -124,6 +181,8 @@ void handle_path_broken(SearchPath *p, char **dirs, size_t n) {
 
 // caller:
 void exercise_3_caller(void){
+    char *line = "cd .";
+    size_t count = 2;
     char **tokens = lex_line(line);
     handle_path_broken(&shell.path, &tokens[1], count);
     free(tokens);
@@ -133,3 +192,46 @@ void exercise_3_caller(void){
 // Two things are wrong here, of different kinds — one is a borrow-outliving-owner problem,
 // one is a literal double-free. Name each separately;
 // they have different root causes even though they interact.
+
+// I'm thinking the double free is on tokens with lex_line freeing tokens and free(tokens) also freeing tokens.
+// the borrowing out living owner problem. is for the variable  &tokens[1] = char **dirs. 
+// clear_path checks again p->directories, but since dirs is already freed by tokens.
+
+// Correction:
+// Borrow out living 
+// p.directories = &tokens[1]
+// ordering itself is the bug, not any single event in isolation.
+// e3 ⇢ e6 — the double free. Two separate calls, free(tokens) and free(p.directories), due to     
+// p->directories = dirs;          // no copy in path broken
+//
+
+
+int handle_path_fixed(SearchPath *p, char **dirs, size_t n) {
+    // dirs is reference, n is pass by value, (hence first copied into the stackframe for this current function)
+    clear_path(p);  //release whatever p owned before for safety.
+
+    // init case
+    if (n == 0) { p->directory_count = 0; return 0; }
+
+    // constructor case 
+    p->directories = malloc(n * sizeof(char *)); // NEW allocation, independent of tokens
+    if (p->directories == NULL) return 1;
+    
+    for (size_t i = 0; i < n; i++) {
+        p->directories[i] = strdup(dirs[i]);     // COPY each string out of tokens's block
+        if (p->directories[i] == NULL) return 1; // (leak-free handling left as the earlier exercise)
+    } 
+
+    // copy/ allocate within heap, so that p->directories and &tokens[0] are separate items on the heap.
+    p->directory_count = n; 
+    return 0;
+}
+
+// so if i'm not mistaken how the borrow double free pair is fixed, is first by making each assignment or potential assignment of p disjoint in life times, 
+// so there's no corruption of memory. and then making tokens and p->directories also disjoint in memory storage so that their freeing do not interact 
+// and then their borrowing is just a read instead of two pointers one item in the heap? algebraically can you also formalize this for me?
+
+// Correction borrowing was eliminated by direct copy strdup(dirs[i]);    
+
+
+
