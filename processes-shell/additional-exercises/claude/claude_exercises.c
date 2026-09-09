@@ -61,7 +61,7 @@ typedef struct {
 } SearchPath;
 
 void set_first_dir(SearchPath *p, char *dir) {
-    p->directories[0] = dir;
+    p->directories[0] = dir; 
 }
 
 // This compiles and often "works" in a quick test. 
@@ -91,7 +91,7 @@ void dangling_borrow(void){
 // Attempt 2 of caller life time example
 
 void populate_from_stack(SearchPath *p){
-    char local_dir[16];
+    char local_dir[16]; //stack frame allocated data
     strcpy(local_dir, "dir");
     set_first_dir(p, local_dir); // p->directories[0] now borrows local_dir's address
 }
@@ -101,20 +101,19 @@ void dangling_borrow(void) {
     SearchPath p;
     init_path(&p);
     populate_from_stack(&p);          // after this call returns, p->directories[0] dangles
-    // because local_dir is removed from stack frame 
+    // because populate_from_stack stack frame is removed 
+    // so local_dir is removed from stack frame 
+    // but p.directories[0] is set to data from the stack frame which is now gone
     printf("%s\n", p.directories[0]); // UB: reads through a pointer whose referent's frame is gone
-    free(p.directories);              // only this call is legal — releases the array itself
+    free(p.directories);              // only this call is legal — releases the array itself but nothing todo with the dangling borrow.
 }
 //so the biggest change here is not the strcpy
 // but the intermediate function which stack frame leaves first and sandwiched in between 
-// a modification of p's internal values and later on a reference to p.directories[0]?
 
-
-
-//e2​
-// p.directories[0]←&local_dir​​<e3​
-// death(local_dir)​​<e4​
-// read p.directories[0]​​
+//strdup() function allocates sufficient memory for a copy of the string s1, does the copy, and returns a pointer to it
+void set_first_dir(SearchPath *p, char *dir) {
+    p->directories[0] = strdup(dir); 
+}
 
 
 // Exercise 3 — double free via two owners
