@@ -113,7 +113,7 @@ void dangling_borrow(void) {
 //strdup() function allocates sufficient memory for a copy of the string s1, does the copy, and returns a pointer to it
 void set_first_dir(SearchPath *p, char *dir) {
     p->directories[0] = strdup(dir); 
-}
+    p->directories[0] = ; }
 
 
 
@@ -232,6 +232,51 @@ int handle_path_fixed(SearchPath *p, char **dirs, size_t n) {
 // and then their borrowing is just a read instead of two pointers one item in the heap? algebraically can you also formalize this for me?
 
 // Correction borrowing was eliminated by direct copy strdup(dirs[i]);    
+// this eliminates pointer aliasing (Two pointers one object in memory) between tokens and path->directories of tokens[1] object in memory.
+// That they're strictly copied and space wise disjoint objects. So life times won't have side effects.
 
 
+// Exercise 4 — the strdup failure path
+int handle_path(SearchPath *path, char **dirs, size_t count) {
+    clear_path(path);
+    path->directories = malloc(count * sizeof(char *));
+    for (size_t i = 0; i < count; i++) {
+        path->directories[i] = strdup(dirs[i]);
+    }
+    path->directory_count = count;
+    return 0;
+}
 
+
+//  strdup can return NULL on allocation failure. If it does on iteration i = 3 of a 5-element copy,
+
+
+//  what is the ownership state of path->directories[0..2], [3], and [4..] at that moment? 
+//  path->directories is an allocated array of pointers size of count.
+//  path->directories[0..2] have heap allocate values of dir[0..2], these a separate chunks in memory from wherever dir[0..2] is stored.
+//  path->directories[4..] are just random values unallocated because we only allocated an array of pointers to strings in the heap.
+//  Assuming path->directories[i] = strdup(dirs[i]) is not run yet we just have i=3 and
+//  the rest of the necessary stuff such as dirs pointer to array and count and pointer ot path in stack frame
+
+//  Is clear_path(path) still safe to call afterward? Why or why not — tie this to what directory_count claims versus what's actually been allocated.
+//  clear path  won't be safe to call if it iterates through all of free(path->directories[i]), because for i = 4.. we would be freeing addresses which weren't owned/ allocated by us in the first place.
+
+
+// assumptions were wrong. it meant strdup fail = NULL for 3 but then continue, now to check clear_path ok?
+// Silent correctness that free(NULL) is NO-OP/ safe.
+// hence clear_path is ok. reset of [4..] resolved normally during handle_path loop hence cleart_path later on too.
+
+
+// Exercise 5 — borrow escaping a stack frame
+
+Command classify_command(char **tokens){
+    Command cmd; 
+    char joined[256];
+    snprintf(joined, sizeof(joined), "%s %s", tokens[0], tokens[1]);
+    cmd.tag = CMD_EXTERNAL;
+    cmd.as.external.name = joined; // <--
+    return cmd;
+}
+// This is a variant of Exercise 1 but harder to spot because it's buried inside a struct field rather than a direct return value. State the rule in general form: *any pointer stored into an escaping struct must borrow from a lifetime that is 
+// ⊇
+// ⊇ the lifetime of the struct itself* — and identify which lifetime joined actually has.
