@@ -267,8 +267,72 @@ int handle_path(SearchPath *path, char **dirs, size_t count) {
 // hence clear_path is ok. reset of [4..] resolved normally during handle_path loop hence cleart_path later on too.
 
 
+
+
+
 // Exercise 5 — borrow escaping a stack frame
 
+typedef enum { CMD_EXIT, CMD_CD, CMD_PATH, CMD_EXTERNAL, CMD_PARSE_ERROR } CommandTag;
+
+
+// tag x argument word. Argument Word = cd_args | path_args | external_args.
+// cd_args = char *dir . path_args 
+typedef struct {
+    CommandTag tag; 
+    union {
+        struct { char *dir; }                 cd;        // exactly one borrowed string
+        struct { char **dirs; size_t count; }  path;      // borrowed strings, may be empty
+        struct { char *name; char **argv; }    external;  // borrowed strings; argv is NULL-terminated for execv
+    } as; // Argument tokens above.
+} Command;
+
+
+// token stream -> Command = tag \times (argument word)
+Command classify_command(char **tokens){
+    Command cmd; 
+
+    // disjunction of init/ tag and catch parse error on ~ (constructor / argument word match) = there exist null early or not null at the end.
+    if (tokens[0] == NULL) {
+        cmd.tag = CMD_PARSE_ERROR;
+        return cmd;
+    }
+
+    if (strcmp(tokens[0], "exit") == 0){
+        if (tokens[1] != NULL){
+            cmd.tag = CMD_PARSE_ERROR;
+            return cmd;
+        }
+        cmd.tag = CMD_EXIT;
+        return cmd;
+    }
+
+    if (strcmp(tokens[0], "cd") == 0){
+        if (tokens[1] == NULL || tokens[2] != NULL){
+            cmd.tag = CMD_PARSE_ERROR;
+            return cmd;
+        }
+        cmd.tag = CMD_CD;
+        return cmd;
+    }
+
+    // direct match since arity is also unknown.
+    if (strcmp(tokens[0], "path") == 0){
+        cmd.tag = CMD_PATH;
+        cmd.as.path.dirs = &tokens[1]; // borrow may point straight to NULL, but we have 
+        size_t n = 0;
+        while (tokens[1 + n] != NULL) n++;
+        cmd.as.path.count = n;  // borrow — execv wants exactly this shape
+        return cmd;
+    }
+    
+    // else:
+    cmd.tag = CMD_EXTERNAL;
+    cmd.as.external.name = tokens[0];
+    cmd.as.external.argv = tokens;
+    return cmd;
+}
+
+// exercise code:
 Command classify_command(char **tokens){
     Command cmd; 
     char joined[256];
@@ -277,6 +341,44 @@ Command classify_command(char **tokens){
     cmd.as.external.name = joined; // <--
     return cmd;
 }
-// This is a variant of Exercise 1 but harder to spot because it's buried inside a struct field rather than a direct return value. State the rule in general form: *any pointer stored into an escaping struct must borrow from a lifetime that is 
-// ⊇
+// This is a variant of Exercise 1 but harder to spot because it's buried inside a struct field rather than a direct return value. 
+// State the rule in general form: *any pointer stored into an escaping struct must borrow from a lifetime that is ⊇
 // ⊇ the lifetime of the struct itself* — and identify which lifetime joined actually has.
+
+// Attempt:
+// for 5 technically cmd.as.external.name and joined are pointer alliasing
+//  to the same part of stack memory, this time the issue is cmd is copied
+//  on return so the higher caller where Command outer_cmd = classify_command(tokens);
+//  will also point to the stack location of joined, but is garbage since the value 
+// at outer_cmd.as.external.name has already been deallocated
+
+
+// Exercise 6 critique.
+void realloc_invalidation(void){
+    char **tokens = malloc(64 * sizeof(char *));
+    char *first = NULL;
+    tokens[0] = "ls";
+    first = tokens[0];              // "borrow" — but of what, exactly?
+    tokens = realloc(tokens, 128 * sizeof(char *));
+    printf("%s\n", first);
+}
+// Trick question in disguise: is first actually dangling here? 
+// Distinguish between borrowing the array (tokens itself, which realloc may move)
+// versus borrowing a string tokens[i] points to (a separate allocation realloc never touches).
+// Which one did this code do, and does the printf crash?
+
+// first is dangling for exercise 6 however since first the value at tokens[0] 
+// is deallocated it'll just print garbage but not crash
+
+
+
+// Exercise 7 — write the ownership contract, not just the code
+// Without writing implementation, write only the function signatures
+// plus a one-line comment per pointer parameter stating whether it's borrowed (B) or must-be-owned/copied-in (O),
+// for a function add_redirection(Command *cmd, char *filename) that 
+// needs to store filename inside cmd for use after the token array that produced 
+// it has been freed. 
+// This is the exercise most directly relevant to extending your shell with > support 
+// — get the contract right before writing the body.
+
+
